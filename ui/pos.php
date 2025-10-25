@@ -1,769 +1,534 @@
 <?php
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 ob_start();
-
-include_once 'connectdb.php';
 session_start();
 
-include_once"header.php";
 
+require_once 'connectdb.php';
+require_once 'header.php';
 
+/**
+ * Return <option> list of products (value = pid)
+ */
+function fill_product($pdo)
+{
+    $output = '';
+    $select = $pdo->prepare("SELECT pid, product FROM tbl_product ORDER BY product ASC");
+    $select->execute();
+    $result = $select->fetchAll(PDO::FETCH_ASSOC);
 
-function fill_product($pdo){
-
-$output='';
-$select=$pdo->prepare("select * from tbl_product order by product asc");
-
-$select->execute();
-
-$result=$select->fetchAll();
-
-foreach($result as $row){
-$output.='<option value="'.$row["pid"].'">'.$row["product"].'</option>';
-
-}
- return $output; 
-
-}
-
-
-if(isset($_POST['btnsaveorder'])){
-
-$orderdate = date("Y-m-d ");
-$subtotal      = $_POST['txtsubtotal'];
-$discount      = $_POST['txtdiscount'];
-$sgst          = $_POST['txtsgst'];
-$cgst          = $_POST['txtcgst'];
-$total         = $_POST['txttotal'];
-$payment_type  = $_POST['rb'];
-$due           = $_POST['txtdue'];
-$paid          = $_POST['txtpaid'];
-
-
-
-$arr_pid       = $_POST['product_arr'];
-$arr_barcode   = $_POST['barcode_arr'];
-$arr_name      = $_POST['pid_arr'];
-$arr_stock     = $_POST['stock_c_arr'];
-$arr_qty       = $_POST['quantity_arr'];
-$arr_price     = $_POST['stock_c'];
-$arr_total     = $_POST['saleprice_arr'];
-
-$insert=$pdo->prepare("insert into tbl_invoice (order_date,subtotal,discount,sgst,cgst,total,payment_type,due,paid) 
-values (:orderdate,:subtotal,:discount,:sgst,:cgst,:total,:payment_type,:due,:paid)");
-
-$insert->bindparam(':orderdate',$orderdate);
-$insert->bindparam(':subtotal',$subtotal);
-$insert->bindparam(':discount',$discount);
-$insert->bindparam(':sgst',$sgst);
-$insert->bindparam(':cgst',$cgst);
-$insert->bindparam(':total',$total);
-$insert->bindparam(':payment_type',$payment_type);
-$insert->bindparam(':due',$due);
-$insert->bindparam(':paid',$paid);
-
-$insert->execute();
-
-
-$invoice_id=$pdo->lastInsertId();
-
-if($invoice_id!=null){
-
-for($i=0;$i<count($arr_pid);$i++){
-
-$rem_qty=$arr_stock[$i]-$arr_qty[$i];
-
-if($rem_qty<0){
-return"Order is not completed";
-
-
-
-}else{
-$update=$pdo->prepare("update tbl_product SET stock='$rem_qty' where pid='".$arr_pid[$i]."'");
-$update->execute();
-
-
-
-
-}//else end here
-
-
-$insert=$pdo->prepare("insert into tbl_invoice_details (invoice_id,barcode,product_id,product_name,qty,rate,saleprice,order_date) 
-values (:invid,:barcode,:pid,:name,:qty,:rate,:saleprice,:order_date)");
-
-$insert->bindParam('invid',$invoice_id);
-$insert->bindParam(':barcode',$arr_barcode[$i]);
-$insert->bindParam(':pid',$arr_pid[$i]);
-$insert->bindParam(':name',$arr_name[$i]);
-$insert->bindParam(':qty',$arr_qty[$i]);
-$insert->bindParam(':rate',$arr_price[$i]);
-$insert->bindParam(':saleprice',$arr_total[$i]);
-$insert->bindParam(':order_date',$orderdate);
-
-if(!$insert->execute()){
-
-print_r($insert->errorInfo());
-
+    foreach ($result as $row) {
+        $output .= '<option value="' . htmlspecialchars($row['pid']) . '">' . htmlspecialchars($row['product']) . '</option>';
+    }
+    return $output;
 }
 
+/**
+ * Save order
+ */
+if (isset($_POST['btnsaveorder'])) {
+    try {
+        $pdo->beginTransaction();
 
-}//end 2nd if
+        $orderdate     = date("Y-m-d");
+        $subtotal      = floatval($_POST['txtsubtotal'] ?? 0);
+        $discount      = floatval($_POST['txtdiscount'] ?? 0);
+        $sgst          = floatval($_POST['txtsgst'] ?? 0);
+        $cgst          = floatval($_POST['txtcgst'] ?? 0);
+        $total         = floatval($_POST['txttotal'] ?? 0);
+        $payment_type  = $_POST['rb'] ?? 'cash';
+        $due           = floatval($_POST['txtdue'] ?? 0);
+        $paid          = floatval($_POST['txtpaid'] ?? 0);
 
+        // Arrays from form
+        $arr_pid       = $_POST['pid_arr'] ?? [];
+        $arr_name      = $_POST['product_arr'] ?? [];
+        $arr_stock     = $_POST['stock_c_arr'] ?? [];
+        $arr_qty       = $_POST['quantity_arr'] ?? [];
+        $arr_price     = $_POST['price_arr'] ?? [];
+        $arr_total     = $_POST['saleprice_arr'] ?? [];
+        $arr_service   = $_POST['service_c_arr'] ?? [];
+        $arr_addfee    = $_POST['addfee_c_arr'] ?? [];
 
-}//end for loop
- header('location:orderlist.php');
+        // Insert into tbl_invoice (main)
+        $insertInvoice = $pdo->prepare("
+            INSERT INTO tbl_invoice 
+            (order_date, subtotal, discount, sgst, cgst, total, payment_type, due, paid)
+            VALUES 
+            (:order_date, :subtotal, :discount, :sgst, :cgst, :total, :payment_type, :due, :paid)
+        ");
 
+        $insertInvoice->execute([
+            ':order_date'   => $orderdate,
+            ':subtotal'     => $subtotal,
+            ':discount'     => $discount,
+            ':sgst'         => $sgst,
+            ':cgst'         => $cgst,
+            ':total'        => $total,
+            ':payment_type' => $payment_type,
+            ':due'          => $due,
+            ':paid'         => $paid,
+        ]);
 
+        $invoice_id = $pdo->lastInsertId();
 
-}//1st if end
+        if ($invoice_id) {
+            // Update product stock
+            $updateStock = $pdo->prepare("UPDATE tbl_product SET stock = :stock WHERE pid = :pid");
 
+            // Insert invoice details
+            $insertDetail = $pdo->prepare("
+                INSERT INTO tbl_invoice_details
+                (invoice_id, product_id, product_name, qty, rate, saleprice, order_date, servicetype, addfee)
+                VALUES 
+                (:invoice_id, :pid, :product_name, :qty, :rate, :saleprice, :order_date, :servicetype, :addfee)
+            ");
 
+            for ($i = 0; $i < count($arr_pid); $i++) {
+                $pid   = intval($arr_pid[$i]);
+                $name  = $arr_name[$i] ?? '';
+                $stock = isset($arr_stock[$i]) ? intval($arr_stock[$i]) : 0;
+                $qty   = isset($arr_qty[$i]) ? intval($arr_qty[$i]) : 0;
+                $rate  = isset($arr_price[$i]) ? floatval($arr_price[$i]) : 0;
+                $lineTotal = isset($arr_total[$i]) ? floatval($arr_total[$i]) : 0;
+                $service = $arr_service[$i] ?? 'Pick up';
+                $addfee = isset($arr_addfee[$i]) ? floatval($arr_addfee[$i]) : 0.00;
 
+                // Update stock
+                $remaining = $stock - $qty;
+                if ($remaining < 0) {
+                    $pdo->rollBack();
+                    header('Location: pos.php?error=insufficient_stock');
+                    exit;
+                }
 
+                $updateStock->execute([
+                    ':stock' => $remaining,
+                    ':pid'   => $pid,
+                ]);
 
+                // Insert details
+                $insertDetail->execute([
+                    ':invoice_id'   => $invoice_id,
+                    ':pid'          => $pid,
+                    ':product_name' => $name,
+                    ':qty'          => $qty,
+                    ':rate'         => $rate,
+                    ':saleprice'    => $lineTotal,
+                    ':order_date'   => $orderdate,
+                    ':servicetype'  => $service,
+                    ':addfee'       => $addfee,
+                ]);
+            }
+        }
 
+        $pdo->commit();
+        header('Location: orderlist.php');
+        exit;
 
-
-//  var_dump($arr_barcode);
-
-
-
-
-
-
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        echo "<pre>❌ ERROR: " . $e->getMessage() . "</pre>";
+        exit;
+    }
+}
 ob_end_flush();
-
-
-
-
-$select=$pdo->prepare(" select * from tbl_taxdis where taxdis_id =1");
+// Fetch tax/discount config
+$select = $pdo->prepare("SELECT * FROM tbl_taxdis WHERE taxdis_id = 1 LIMIT 1");
 $select->execute();
-$row=$select->fetch(PDO::FETCH_OBJ);
-
-
+$row = $select->fetch(PDO::FETCH_OBJ);
 ?>
+<!------------- HTML / View -------------->
 
 <style type="text/css">
-
-.tableFixHead{
-  overflow: scroll;
-  height:520px;
-
-}
-.tableFixHead thead th {
-  position: sticky;
-  top:0;
-  z-index: 1;
-}
-
-table{border-collapse:collapse; width: 100px;}
-th,td {padding: 8px 16px;}
-th{background:#eee;}
-
-
+  .tableFixHead {
+    overflow: auto;
+    height: 520px;
+  }
+  .tableFixHead thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 8px 12px; }
+  th { background: #eee; }
 </style>
 
-
-
-
-
-
-
-  <!-- Content Wrapper. Contains page content -->
-  <div class="content-wrapper">
-    <!-- Content Header (Page header) -->
-    <div class="content-header">
-      <div class="container-fluid">
-        <div class="row mb-2">
-          <div class="col-sm-6">
-            <!-- <h1 class="m-0">Point of Sale</h1> -->
-          </div><!-- /.col -->
-          <div class="col-sm-6">
-            <ol class="breadcrumb float-sm-right">
-             <!-- <li class="breadcrumb-item"><a href="#">Home</a></li>
-              <li class="breadcrumb-item active">Starter Page</li> -->
-            </ol>
-          </div><!-- /.col -->
-        </div><!-- /.row -->
-      </div><!-- /.container-fluid -->
+<div class="content-wrapper">
+  <div class="content-header">
+    <div class="container-fluid">
+      <div class="row mb-2">
+        <div class="col-sm-6"></div>
+        <div class="col-sm-6"><ol class="breadcrumb float-sm-right"></ol></div>
+      </div>
     </div>
-    <!-- /.content-header -->
+  </div>
 
-    <!-- Main content -->
-    <div class="content">
-      <div class="container-fluid">
-        
-          <div class="col-lg-12">
-            
-          
-          <div class="card card-primary card-outline">
-              <div class="card-header">
-                <h5 class="m-0">POS</h5>
+  <div class="content">
+    <div class="container-fluid">
+      <div class="col-lg-12">
+        <div class="card card-primary card-outline">
+          <div class="card-header"><h5 class="m-0">POS</h5></div>
+          <div class="card-body">
+            <div class="row">
+              <div class="col-md-8">
+                <form action="" method="post" name="posform" id="posform">
+                  <select id="product_select" class="form-control select2" data-dropdown-css-class="select2-purple" style="width: 100%;">
+                    <option value=""> Select OR Search</option>
+                    <?php echo fill_product($pdo); ?>
+                  </select>
+                  <br>
+
+                  <div class="tableFixHead">
+                    <table id="producttable" class="table table-bordered table-hover">
+                      <thead>
+                        <tr>
+                          <th>Product Code</th>
+                          <th>Brand</th>
+                          <th>Category</th>
+                          <th>Expiry</th>
+                          <th>Price</th>
+                          <th>QTY</th>
+                          <th>Service</th>
+                          <th>Add fee</th>
+                          <th>Total</th>
+                          <th>Del</th>
+                        </tr>
+                      </thead>
+                      <tbody class="details" id="itemtable">
+                        <!-- rows appended here -->
+                      </tbody>
+                    </table>
+                  </div>
+                <!-- form continues in right column -->
               </div>
 
-
-
-              <div class="card-body">
-              
-              
-<div class="row">
-
-<div class="col-md-8">
-
-
-
-
-                <form action="" method="post" name="">
-              
-                  <select class="form-control select2" data-dropdown-css-class="select2-purple" style="width: 100%;">
-                    <option> Select OR Search</option><?php echo  fill_product($pdo);?>
-                   
-                  </select>
-</br>
-<div class="tableFixHead">
-
-
-<table id="producttable" class="table table-bordered table-hover">
-  <thead> 
-<tr>
-  <th>Product Code</th>
-  <th>Stock   </th>
-  <th>Price   </th>
-  <th>QTY     </th>
-  <th>Total   </th>
-  <th>Del     </th>
-</tr>
-
-</thead>
-
-
-
-
-<tbody class="details" id="itemtable">
-
-<tr data-widget="expandable-table" aria-expanded="false">
-        
-
- </tr>              
-</tbody>
-</table>
-
-
-</div>
-
-
-
-
-
-</div>
-
-
-<div class="col-md-4">
-<div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">SUBTOTAL(₱)</span>
-                  </div>
-                  <input type="text" class="form-control"name="txtsubtotal" id="txtsubtotal_id" readonly>
-                  <div class="input-group-append">
-                    <span class="input-group-text">₱</span>
-                  </div>
+              <div class="col-md-4">
+                <div class="input-group mb-2">
+                  <div class="input-group-prepend"><span class="input-group-text">SUBTOTAL(₱)</span></div>
+                  <input type="text" class="form-control" name="txtsubtotal" id="txtsubtotal_id" readonly>
+                  <div class="input-group-append"><span class="input-group-text">₱</span></div>
                 </div>
 
-                <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text">DISCOUNT(%)</span>
-                  </div>
-                  <input type="text" class="form-control" name="txtdiscount" id="txtdiscount_p"value="<?php echo $row->discount;?>">
-                  <div class="input-group-append">
-                    <span class="input-group-text">%</span>
-                  </div>
+                <div class="input-group mb-2">
+                  <div class="input-group-prepend"><span class="input-group-text">DISCOUNT(%)</span></div>
+                  <input type="text" class="form-control" name="txtdiscount" id="txtdiscount_p" value="<?php echo htmlspecialchars($row->discount ?? 0); ?>">
+                  <div class="input-group-append"><span class="input-group-text">%</span></div>
                 </div>
 
-                <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text">DISCOUNT(₱)</span>
-                  </div>
-                  <input type="text" class="form-control" id="txtdiscount_n"readonly>
-                  <div class="input-group-append">
-                    <span class="input-group-text">₱</span>
-                  </div>
+                <div class="input-group mb-2">
+                  <div class="input-group-prepend"><span class="input-group-text">DISCOUNT(₱)</span></div>
+                  <input type="text" class="form-control" id="txtdiscount_n" readonly>
+                  <div class="input-group-append"><span class="input-group-text">₱</span></div>
                 </div>
 
-
-                
-                <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text">SGST(%)</span>
-                  </div>
-                  <input type="text" class="form-control" name="txtsgst" id="txtsgst_id_p" value="<?php echo $row->sgst;?>" readonly>
-                  <div class="input-group-append">
-                    <span class="input-group-text">%</span>
-                  </div>
+                <div class="input-group mb-2">
+                  <div class="input-group-prepend"><span class="input-group-text">SGST(%)</span></div>
+                  <input type="text" class="form-control" name="txtsgst" id="txtsgst_id_p" value="<?php echo htmlspecialchars($row->sgst ?? 0); ?>" readonly>
+                  <div class="input-group-append"><span class="input-group-text">%</span></div>
                 </div>
 
-                
-                <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text">CGST(%)</span>
-                  </div>
-                  <input type="text" class="form-control"name="txtcgst" id="txtcgst_id_p" value="<?php echo $row->cgst;?>"readonly >
-                  <div class="input-group-append">
-                    <span class="input-group-text">%</span>
-                  </div> 
+                <div class="input-group mb-2">
+                  <div class="input-group-prepend"><span class="input-group-text">CGST(%)</span></div>
+                  <input type="text" class="form-control" name="txtcgst" id="txtcgst_id_p" value="<?php echo htmlspecialchars($row->cgst ?? 0); ?>" readonly>
+                  <div class="input-group-append"><span class="input-group-text">%</span></div>
                 </div>
 
-                
-                
-                <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text">SGST(₱)</span>
-                  </div>
+                <div class="input-group mb-2">
+                  <div class="input-group-prepend"><span class="input-group-text">SGST(₱)</span></div>
                   <input type="text" class="form-control" id="txtsgst_id_n" readonly>
-                  <div class="input-group-append">
-                    <span class="input-group-text">₱</span>
-                  </div>
+                  <div class="input-group-append"><span class="input-group-text">₱</span></div>
                 </div>
 
-                
-                <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text">CGST(₱)</span>
-                  </div>
-                  <input type="text" class="form-control"id="txtcgst_id_n"readonly >
-                  <div class="input-group-append">
-                    <span class="input-group-text">₱</span>
-                  </div>
+                <div class="input-group mb-2">
+                  <div class="input-group-prepend"><span class="input-group-text">CGST(₱)</span></div>
+                  <input type="text" class="form-control" id="txtcgst_id_n" readonly>
+                  <div class="input-group-append"><span class="input-group-text">₱</span></div>
                 </div>
 
-<hr style="height:3px; border-width:0; color:black; background-color:black">
+                <hr>
 
-
-<div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text">TOTAL(₱)</span>
-                  </div>
-                  <input type="text" class="form-control form-control-lg total" name="txttotal" id="txttotal"readonly >
-                  <div class="input-group-append">
-                    <span class="input-group-text">₱</span>
-                  </div>
+                <div class="input-group mb-2">
+                  <div class="input-group-prepend"><span class="input-group-text">TOTAL(₱)</span></div>
+                  <input type="text" class="form-control form-control-lg total" name="txttotal" id="txttotal" readonly>
+                  <div class="input-group-append"><span class="input-group-text">₱</span></div>
                 </div>
-                <hr style="height:3px; border-width:0; color:black; background-color:black">
 
+                <hr>
 
                 <div class="icheck-success d-inline">
-                        <input type="radio" name="rb" value="cash"checked id="radioSuccess1">
-                        <label for="radioSuccess1">
-                          CASH
-                        </label>
-                      </div>
-                      <div class="icheck-primary d-inline">
-                        <input type="radio" name="rb" value="card" id="radioSuccess2">
-                        <label for="radioSuccess2">
-                          CARD
-                        </label>
-                      </div>
-                      <div class="icheck-danger d-inline">
-                        <input type="radio" name="rb" value="check" id="radioSuccess3">
-                        <label for="radioSuccess3">
-                          CHECK
-                        </label>
-                      </div>
-
-                      <hr style="height:3px; border-width:0; color:black; background-color:black">
-
-
-                
-                      <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text">DUE(₱)</span>
-                  </div>
-                  <input type="text" class="form-control"name="txtdue" id="txtdue" readonly >
-                  <div class="input-group-append">
-                    <span class="input-group-text">₱</span>
-                  </div>
+                  <input type="radio" name="rb" value="cash" checked id="radioSuccess1">
+                  <label for="radioSuccess1">CASH</label>
+                </div>
+                <div class="icheck-primary d-inline">
+                  <input type="radio" name="rb" value="card" id="radioSuccess2">
+                  <label for="radioSuccess2">CARD</label>
+                </div>
+                <div class="icheck-danger d-inline">
+                  <input type="radio" name="rb" value="check" id="radioSuccess3">
+                  <label for="radioSuccess3">CHECK</label>
                 </div>
 
-                
-                
-                <div class="input-group">
-                <div class="input-group-prepend">
-                    <span class="input-group-text">PAID(₱)</span>
-                  </div>
-                  <input type="text" class="form-control" name="txtpaid" id="txtpaid" >
-                  <div class="input-group-append">
-                    <span class="input-group-text">₱</span>
-                  </div>
+                <hr>
+
+                <div class="input-group mb-2">
+                  <div class="input-group-prepend"><span class="input-group-text">DUE(₱)</span></div>
+                  <input type="text" class="form-control" name="txtdue" id="txtdue" readonly>
+                  <div class="input-group-append"><span class="input-group-text">₱</span></div>
                 </div>
 
-                <hr style="height:3px; border-width:0; color:black; background-color:black">
+                <div class="input-group mb-2">
+                  <div class="input-group-prepend"><span class="input-group-text">PAID(₱)</span></div>
+                  <input type="text" class="form-control" name="txtpaid" id="txtpaid">
+                  <div class="input-group-append"><span class="input-group-text">₱</span></div>
+                </div>
+
+                <hr>
 
                 <div class="card-footer">
-
-
-<div class="text-center">
-                  <button type="submit" class="btn btn-success"  name="btnsaveorder">Save Order</button></div>
+                  <div class="text-center">
+                    <button type="submit" class="btn btn-success" name="btnsaveorder">Save Order</button>
+                  </div>
                 </div>
+              </div> <!-- /.col-md-4 -->
+            </div> <!-- /.row -->
+          </div> <!-- /.card-body -->
+        </div> <!-- /.card -->
+      </div> <!-- /.col-lg-12 -->
+    </div> <!-- /.container-fluid -->
+    </form>
+  </div> <!-- /.content -->
+</div> <!-- /.content-wrapper -->
 
-
-
-</div>
-
-
-</div>
-</div>
-              </div>
-
-              </div>
-
-
-
-
-
-            </div>
-          
-</form>
-
-           
-          </div>
-          <!-- /.col-md-6 -->
-        </div>
-        <!-- /.row -->
-      </div><!-- /.container-fluid -->
-    </div>
-    <!-- /.content -->
-  </div>
-  <!-- /.content-wrapper -->
- 
- 
- <?php
-
-include_once"footer.php";
-
-
-?>
+<?php require_once 'footer.php'; ?>
 
 <script>
-
-    //Initialize Select2 Elements
-    $('.select2').select2()
-
-    //Initialize Select2 Elements
-    $('.select2bs4').select2({
-      theme: 'bootstrap4'
-    })
-  
-
-
-
-    var productarr=[];
-
-$(function(){
-
-$('#txtbarcode_id').on('change', function(){  
-
-var barcode = $("#txtbarcode_id").val();
-
-$.ajax({
-url: "getproduct.php",
-method: "get",
-dataType: "json",
-data: {id:barcode},
-success: function(data){
-
-  // alert("pID");
-
-  // console.log(data);
-
-  if(jQuery.inArray(data["pid"],productarr)!== -1){
-
-  var actualqty = parseInt($('#qty_id'+data["pid"]).val())+1;
-  $('#qty_id'+data["pid"].val(actualqty));
-
-
-
-  var saleprice = parseInt(actualqty)*data["saleprice"];
-
-  $('#saleprice_id'+data["pid"]).html(saleprice);
-  $('#saleprice_idd'+data["pid"]).val(saleprice);
-
-  // $("#txtbarcode_id").val("");
-
-  calculate(0,0);
-
-}else{
-
-   //revised version
-
-   addrow(data["pid"], data["product"], data["saleprice"], data["stock"], data["barcode"]);
-
-productarr.push(data["pid"]);
-
-// $("#txtbarcode_id").val("");
-
-  function addrow(pid, product, saleprice, stock, barcode){
-
-  
-    var tr='<tr>'+
-
-    '<input type="hidden" class="form-control barcode" name="barcode_arr[]" id="barcode_id' +barcode+ '" value="'+barcode+'">' +
-
-  '<td style="text-align: left; vertical-align: middle; font-size: 17px;"><class="form-control product_c" name="product_arr[]" <span class="badge badge-dark">'+product+'</span><input type="hidden" class="form-control pid" name="pid_arr[]" value="'+product+'"><input type="hidden" class="form-control product" name="product_arr[]" value="'+pid+'"></td>'+
-
-  '<td style="text-align:left; vertical-align:middle; font-size:17px;">' +
-                '<span class="badge badge-primary stocklbl" name="stock_arr[]"  id="stock_id' + pid + '">' + stock + '</span>' +
-                '<input type="hidden" class="form-control stock_c" name="stock_c_arr[]" id="stock_idd' + pid + '" value="' + stock + '"></td>' +
-
-                '<td style="text-align:left; vertical-align:middle; font-size:17px;">' +
-                '<span class="badge badge-warning price" name="price_arr[]"  id="price_id' + pid + '">' + saleprice + '</span>' +
-                '<input type="hidden" class="form-control stock_c" name="stock_c[]" id="stock_idd' + pid + '" value="' + stock + '"></td>' +
-
-                '<td><input type="text" class="form-control qty" name="quantity_arr[]" id="qty_id' + pid + '" value="1" size="1"></td>' +
-                '<td style="text-align:left; vertical-align:middle; font-size:17px;">' +
-                '<span class="badge badge-success totalamt" name="netamt_arr[]"  id="saleprice_id' + pid + '">' + saleprice + '</span>' +
-                '<input type="hidden" class="form-control saleprice" name="saleprice_arr[]" id="saleprice_idd' + pid + '" value="' + saleprice + '"></td>' +
-                
-                
-                '<td><center><button type="button" name="remove"  class=" btn btn-danger btn-sm btnremove" data-id="'+pid+'"><span class="fas fa-trash"></span></button></center></td>'+
-               
-               '</tr>';
-
-      $('.details').append(tr);
-
-      calculate(0,0);
-
-}//end f function addrow
-
-}
-
-$("#txtbarcode_id").val("");
-
-} //end pf success function
-
-}) //end of ajax request
-
-}) // end of onchange function
-
-}); // end of main function
-
-
-var productarr=[];
-
-$(function(){
-
-$('.select2').on('change', function(){  
-
-var productid = $(".select2").val();
-
-$.ajax({
-url: "getproduct.php",
-method: "get",
-dataType: "json",
-data: {id:productid},
-success: function(data){
-
-  // alert("pID");
-
-  // console.log(data);
-
-  if(jQuery.inArray(data["pid"],productarr)!== -1){
-
-  var actualqty = parseInt($('#qty_id'+data["pid"]).val())+1;
-  $('#qty_id'+data["pid"].val(actualqty));
-
-
-
-  var saleprice = parseInt(actualqty)*data["saleprice"];
-
-  $('#saleprice_id'+data["pid"]).html(saleprice);
-  $('#saleprice_idd'+data["pid"]).val(saleprice);
-
-  // $("#txtbarcode_id").val("");
-
-  calculate(0,0);
-
-}else{
-
-   //revised version
-
-   addrow(data["pid"], data["product"], data["saleprice"], data["stock"], data["barcode"]);
-
-productarr.push(data["pid"]);
-
-// $("#txtbarcode_id").val("");
-
-  function addrow(pid, product, saleprice, stock, barcode){
-
-  
-    var tr='<tr>'+
-
-    '<input type="hidden" class="form-control barcode" name="barcode_arr[]" id="barcode_id' +barcode+ '" value="'+barcode+'">' +
-
-  '<td style="text-align: left; vertical-align: middle; font-size: 17px;"><class="form-control product_c" name="product_arr[]" <span class="badge badge-dark">'+product+'</span><input type="hidden" class="form-control pid" name="pid_arr[]" value="'+product+'"><input type="hidden" class="form-control product" name="product_arr[]" value="'+pid+'"></td>'+
-
-  '<td style="text-align:left; vertical-align:middle; font-size:17px;">' +
-                '<span class="badge badge-primary stocklbl" name="stock_arr[]"  id="stock_id' + pid + '">' + stock + '</span>' +
-                '<input type="hidden" class="form-control stock_c" name="stock_c_arr[]" id="stock_idd' + pid + '" value="' + stock + '"></td>' +
-
-                '<td style="text-align:left; vertical-align:middle; font-size:17px;">' +
-                '<span class="badge badge-warning price" name="price_arr[]"  id="price_id' + pid + '">' + saleprice + '</span>' +
-                '<input type="hidden" class="form-control stock_c" name="stock_c[]" id="stock_idd' + pid + '" value="' + stock + '"></td>' +
-
-                '<td><input type="text" class="form-control qty" name="quantity_arr[]" id="qty_id' + pid + '" value="1" size="1"></td>' +
-                '<td style="text-align:left; vertical-align:middle; font-size:17px;">' +
-                '<span class="badge badge-success totalamt" name="netamt_arr[]"  id="saleprice_id' + pid + '">' + saleprice + '</span>' +
-                '<input type="hidden" class="form-control saleprice" name="saleprice_arr[]" id="saleprice_idd' + pid + '" value="' + saleprice + '"></td>' +
-                
-                // '<td style="text-align: left; vertical-align: middle;"><center><name="remove" class="btnremove" data-id="'+pid+'"><span class="fas fa-trash" style="color:red"></span></center></td>'+
-               '<td><center><button type="button" name="remove"  class=" btn btn-danger btn-sm btnremove" data-id="'+pid+'"><span class="fas fa-trash"></span></button></center></td>'+
-               
-                '</tr>';
-
-      $('.details').append(tr);
-
-      calculate(0,0);
-
-}//end f function addrow
-
-}
-
-$("#txtbarcode_id").val("");
-
-} //end pf success function
-
-}) //end of ajax request
-
-}) // end of onchange function
-
-}); // end of main function
-
-
-
-
-
-
-
-
-
-
-
-$("#itemtable").delegate(".qty", "keyup change", function(){
-
-var quantity=$(this);
-var tr = $(this).parent().parent();
-
-if((quantity.val()-0)>(tr.find(".stock_c").val()-0)){
-
-swal.fire("WARNING!", "SORRY! This Much of Quantity Is Not Available", "warning");
-quantity.val(1);
-
-tr.find(".totalamt").text(quantity.val()* tr.find(".price").text());
-
-tr.find(".saleprice").val(quantity.val()* tr.find(".price").text());
-calculate(0,0);
-}else{
-
-  
-tr.find(".totalamt").text(quantity.val()* tr.find(".price").text());
-
-tr.find(".saleprice").val(quantity.val()* tr.find(".price").text());
-
-calculate(0,0);
-}
-
-
-
-});
-
-  
-function calculate(dis,paid){
-
-var subtotal=0;
-var discount=dis;
-var sgst =0;
-var csgt=0;
-var total=0;
-var paid_amt=paid;
-var due=0;
-
-$(".saleprice").each(function(){
-
-subtotal=subtotal+($(this).val()*1);
-
-});
-
-$("#txtsubtotal_id").val(subtotal.toFixed(2));
-
-sgst=parseFloat($("#txtsgst_id_p").val());
-
-cgst=parseFloat($("#txtcgst_id_p").val());
-
-discount=parseFloat($("#txtdiscount_p").val());
-
-sgst=sgst/100;
-sgst=sgst*subtotal;
-
-cgst=cgst/100;
-cgst=cgst*subtotal;
-
-discount=discount/100;
-discount=discount*subtotal;
-
-$("#txtsgst_id_n").val(sgst.toFixed(2));
-
-$("#txtcgst_id_n").val(cgst.toFixed(2));
-
-$("#txtdiscount_n").val(discount.toFixed(2));
-
-total=sgst+cgst+subtotal-discount;
-due=total-paid_amt;
-
-$("#txttotal").val(total.toFixed(2));
-
-$("#txtdue").val(due.toFixed(2));
-
-
-}
-
-$("#txtdiscount_p").keyup(function(){
-
-var discount=$(this).val();
-
-calculate(discount,0);
-
-});
-
-$("#txtpaid").keyup(function(){
-
-var paid=$(this).val();
-var discount=$("#txtdiscount_p").val();
-calculate(discount,paid);
-
-
-});
-
-
-$(document).on('click','.btnremove',function(){
-
-  var removed=$(this).attr("data-id");
-  productarr=jQuery.grep(productarr,function(value){
-
-    return value!=removed;
+  // Initialize Select2 Elements
+  $('.select2').select2();
+  $('.select2bs4').select2({ theme: 'bootstrap4' });
+
+  let productarr = [];
+
+  /**
+   * addRow: inserts a new product row in the table
+   * params order: pid, product, brand, category, expirydate, saleprice (unit), stock, servicetype, additionalfee
+   */
+  function addRow(pid, product, brand, category, expirydate, saleprice, stock, servicetype, addfee) {
+    const unitPrice = parseFloat(saleprice) || 0;
+    const addFee = parseFloat(addfee) || 0;
+    const qtyDefault = 1;
+    const lineTotal = (unitPrice * qtyDefault) + addFee;
+
+    const tr = `
+      <tr data-pid="${pid}">
+        <td style="text-align:left; vertical-align:middle; font-size:17px;">
+          <span class="badge badge-dark">${product}</span>
+          <input type="hidden" name="pid_arr[]" value="${pid}">
+          <input type="hidden" name="product_arr[]" value="${product}">
+        </td>
+
+        <td style="text-align:left; vertical-align:middle; font-size:17px;">
+          <span class="badge badge-primary brandlbl">${brand}</span>
+          <input type="hidden" name="brand_c_arr[]" value="${brand}">
+        </td>
+
+        <td style="text-align:left; vertical-align:middle; font-size:17px;">
+          <span class="badge badge-info categorylbl">${category}</span>
+          <input type="hidden" name="category_c_arr[]" value="${category}">
+        </td>
+
+        <td style="text-align:left; vertical-align:middle; font-size:17px;">
+          <span class="badge badge-secondary expiry">${expirydate}</span>
+          <input type="hidden" name="expiry_c_arr[]" value="${expirydate}">
+        </td>
+
+        <td style="text-align:left; vertical-align:middle; font-size:17px;">
+          <span class="badge badge-warning price">${unitPrice.toFixed(2)}</span>
+          <input type="hidden" name="price_arr[]" value="${unitPrice.toFixed(2)}">
+        </td>
+
+        <td>
+          <input type="number" class="form-control qty" name="quantity_arr[]" id="qty_id${pid}" value="${qtyDefault}" min="1" data-stock="${stock}">
+          <input type="hidden" name="stock_c_arr[]" value="${stock}">
+        </td>
+
+        <td style="text-align:left; vertical-align:middle; font-size:17px;">
+          <select class="form-control service-select" name="service_c_arr[]">
+            <option value="Pick up">Pick up</option>
+            <option value="Delivery">Delivery</option>
+          </select>
+        </td>
+
+        <td style="text-align:left; vertical-align:middle; font-size:17px;">
+          <span class="badge badge-primary addfee-display">${addFee.toFixed(2)}</span>
+          <input type="hidden" class="addfee" name="addfee_c_arr[]" value="${addFee.toFixed(2)}">
+        </td>
+
+        <td style="text-align:left; vertical-align:middle; font-size:17px;">
+          <span class="badge badge-success totalamt">${lineTotal.toFixed(2)}</span>
+          <input type="hidden" class="saleprice" name="saleprice_arr[]" value="${lineTotal.toFixed(2)}">
+        </td>
+
+        <td>
+          <center>
+            <button type="button" class="btn btn-danger btn-sm btnremove" data-id="${pid}">
+              <span class="fas fa-trash"></span>
+            </button>
+          </center>
+        </td>
+      </tr>
+    `;
+
+    // Append row and recalc totals
+    $('.details').append(tr);
+    // set initial service value and ensure calculations correct
+    setServiceSelectForPid(pid, servicetype);
+    calculate(0, 0);
+  }
+
+  // AJAX fetch for barcode input (if you use txtbarcode_id)
+  $(function () {
+    $('#txtbarcode_id').on('change', function () {
+      const barcode = $(this).val();
+      if (!barcode) return;
+      $.ajax({
+        url: 'getproduct.php',
+        method: 'GET',
+        dataType: 'json',
+        data: { id: barcode },
+        success: function (data) {
+          if (!data || !data.pid) return;
+          if ($.inArray(String(data.pid), productarr) !== -1) {
+            const qtyEl = $('#qty_id' + data.pid);
+            qtyEl.val((parseInt(qtyEl.val() || 0, 10) + 1)).trigger('change');
+          } else {
+            const defaultService = 'Pick up';
+            const defaultAddFee = 0;
+            addRow(data.pid, data.product, data.brand, data.category, data.expirydate, data.saleprice, data.stock, defaultService, defaultAddFee);
+            productarr.push(String(data.pid));
+            setServiceSelectForPid(data.pid, defaultService);
+          }
+          $('#txtbarcode_id').val('');
+        }
+      });
+    });
+
+    // Select2 product select flow
+    $('#product_select').on('change', function () {
+      const productid = $(this).val();
+      if (!productid) return;
+      $.ajax({
+        url: 'getproduct.php',
+        method: 'GET',
+        dataType: 'json',
+        data: { id: productid },
+        success: function (data) {
+          if (!data || !data.pid) return;
+          if ($.inArray(String(data.pid), productarr) !== -1) {
+            const qtyEl = $('#qty_id' + data.pid);
+            qtyEl.val((parseInt(qtyEl.val() || 0, 10) + 1)).trigger('change');
+          } else {
+            const defaultService = 'Pick up';
+            const defaultAddFee = 0;
+            addRow(data.pid, data.product, data.brand, data.category, data.expirydate, data.saleprice, data.stock, defaultService, defaultAddFee);
+            productarr.push(String(data.pid));
+            setServiceSelectForPid(data.pid, defaultService);
+          }
+          $('#product_select').val('').trigger('change');
+        }
+      });
+    });
+
+    // Delegate qty and service change
+    $("#itemtable").on("input change", ".qty, .service-select", function () {
+      const $this = $(this);
+      const tr = $this.closest('tr');
+      const qty = parseInt(tr.find('.qty').val() || 0, 10);
+      const stock = parseInt(tr.find('.qty').data('stock') || tr.find('input[name="stock_c_arr[]"]').val() || 0, 10);
+
+      if (qty > stock) {
+        swal.fire("WARNING!", "SORRY! This Much of Quantity Is Not Available", "warning");
+        tr.find('.qty').val(1);
+      }
+
+      // when service changes update fee
+      const serviceVal = tr.find('.service-select').val();
+      const fee = (serviceVal === 'Delivery') ? 50 : 0;
+      tr.find('.addfee-display').text(parseFloat(fee).toFixed(2));
+      tr.find('.addfee').val(parseFloat(fee).toFixed(2));
+
+      updateRowTotal(tr[0]);
+      calculate(0, 0);
+    });
+
+    // Remove row
+    $(document).on('click', '.btnremove', function () {
+      const removed = $(this).attr("data-id");
+      productarr = $.grep(productarr, function (value) { return value != removed; });
+      $(this).closest("tr").remove();
+      calculate(0, 0);
+    });
+
+    // Discount / Paid events
+    $("#txtdiscount_p").on('input', function () {
+      calculate(parseFloat($(this).val() || 0), 0);
+    });
+
+    $("#txtpaid").on('input', function () {
+      calculate(parseFloat($("#txtdiscount_p").val() || 0), parseFloat($(this).val() || 0));
+    });
+  });
+
+  // Set service select for appended row by pid
+  function setServiceSelectForPid(pid, serviceValue) {
+    const row = $(`tr[data-pid="${pid}"]`);
+    row.find('.service-select').val(serviceValue);
+    // set addfee according to service
+    const addfee = (serviceValue === 'Delivery') ? 50 : 0;
+    row.find('.addfee-display').text(parseFloat(addfee).toFixed(2));
+    row.find('.addfee').val(parseFloat(addfee).toFixed(2));
+    updateRowTotal(row[0]);
     calculate(0,0);
-  });
+  }
 
-$(this).closest("tr").remove();
-calculate(0,0);
+  // Recalculate one row total and update hidden input
+  function updateRowTotal(row) {
+    const unitPrice = parseFloat(row.querySelector('.price')?.textContent || 0);
+    const qty = parseFloat(row.querySelector('.qty')?.value || 0);
+    const addFee = parseFloat(row.querySelector('.addfee')?.value || 0);
 
-  });
+    const lineTotal = (unitPrice * qty) + addFee;
+    row.querySelector('.totalamt').textContent = lineTotal.toFixed(2);
+    row.querySelector('.saleprice').value = lineTotal.toFixed(2);
+  }
 
+  // Recompute subtotal, taxes, discount, total, due
+  function calculate(discountPercent, paidAmt) {
+    let subtotal = 0;
+    $(".saleprice").each(function () {
+      subtotal += parseFloat($(this).val() || 0);
+    });
 
+    $("#txtsubtotal_id").val(subtotal.toFixed(2));
 
+    const sgstPct = parseFloat($("#txtsgst_id_p").val() || 0);
+    const cgstPct = parseFloat($("#txtcgst_id_p").val() || 0);
+    const discountPct = parseFloat($("#txtdiscount_p").val() || 0);
 
+    const sgstN = (sgstPct / 100) * subtotal;
+    const cgstN = (cgstPct / 100) * subtotal;
+    const discountN = (discountPct / 100) * subtotal;
 
+    $("#txtsgst_id_n").val(sgstN.toFixed(2));
+    $("#txtcgst_id_n").val(cgstN.toFixed(2));
+    $("#txtdiscount_n").val(discountN.toFixed(2));
 
+    const total = subtotal + sgstN + cgstN - discountN;
+    const due = total - parseFloat(paidAmt || 0);
 
-
-
-
-
-
-    </script>
+    $("#txttotal").val(total.toFixed(2));
+    $("#txtdue").val(due.toFixed(2));
+  }
+</script>

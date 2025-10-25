@@ -8,7 +8,6 @@ include_once "header.php";
 if (isset($_POST['btnsave'])) {
 
     $product = $_POST['txtProductcode'];
-    $category = $_POST['txtBarcode']; // Category dropdown
     $description = $_POST['txtdescription'];
     $servicetype = $_POST['txtstock']; // Service Type dropdown
     $additionalfee = $_POST['txtsaleprice']; // Additional Fee input
@@ -40,14 +39,12 @@ if (isset($_POST['btnsave'])) {
 
                 $productimage = $f_newfile;
 
-                $insert = $pdo->prepare("INSERT INTO tbl_product(product, category, description, servicetype, additionalfee, purchaseprice, saleprice, image, stock, brand, expirydate)
-                    VALUES(:product, :category, :description, :servicetype, :additionalfee, :pprice, :saleprice, :img, :stock, :brand, :expirydate)");
+                $insert = $pdo->prepare("INSERT INTO tbl_product(product, category, description, purchaseprice, saleprice, image, stock, brand, expirydate)
+                    VALUES(:product, :category, :description,:pprice, :saleprice, :img, :stock, :brand, :expirydate)");
 
                 $insert->bindParam(':product', $product);
                 $insert->bindParam(':category', $category);
                 $insert->bindParam(':description', $description);
-                $insert->bindParam(':servicetype', $servicetype);
-                $insert->bindParam(':additionalfee', $additionalfee);
                 $insert->bindParam(':pprice', $purchaseprice);
                 $insert->bindParam(':saleprice', $saleprice);
                 $insert->bindParam(':img', $productimage);
@@ -132,20 +129,6 @@ if (isset($_POST['btnsave'])) {
                     <div class="form-group">
                       <label>Description:</label>
                       <input type="text" class="form-control" placeholder="Enter Description" name="txtdescription" required>
-                    </div>
-
-                    <div class="form-group">
-                      <label>Service Type:</label>
-                      <select class="form-control" name="txtstock" id="servicetype" required>
-                        <option value="" disabled selected>Select Service Type</option>
-                        <option value="Delivery">Delivery</option>
-                        <option value="Pick-up">Pick-up</option>
-                      </select>
-                    </div>
-
-                    <div class="form-group">
-                      <label>Additional Fee:</label>
-                      <input type="text" class="form-control" placeholder="Enter Additional Fee" name="txtsaleprice" id="additionalfee" required>
                     </div>
 
                     <div class="form-group">

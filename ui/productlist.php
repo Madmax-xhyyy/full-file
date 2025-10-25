@@ -50,8 +50,7 @@ include_once"header.php";
   <td>Product Code</td>
   <td>Category</td>
   <td>Description</td>
-  <td>Service Type</td>
-  <td>Additional Fee</td>
+  <td>Stock</td>
   <td>Purchase Price</td>
   <td>Sale Price</td>
   <td>Product Image</td>
@@ -80,8 +79,7 @@ while($row=$select->fetch(PDO::FETCH_OBJ))
   <td>'.$row->product.'</td>
   <td>'.$row->category.'</td>
   <td>'.$row->description.'</td>
-  <td>'.$row->servicetype.'</td>
-  <td>'.$row->additionalfee.'</td>
+  <td>'.$row->stock.'</td>
   <td>'.$row->purchaseprice.'</td>
   <td>'.$row->saleprice.'</td>
   <td><img src="productimages/'.$row->image.'" class="img-rounded" width="40px"/></td>

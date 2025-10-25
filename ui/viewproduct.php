@@ -57,8 +57,6 @@ if($row = $select->fetch(PDO::FETCH_OBJ)){
     $productCode = htmlspecialchars($row->product);
     $category = htmlspecialchars($row->category);
     $description = htmlspecialchars($row->description);
-    $servicetype = htmlspecialchars($row->servicetype);
-    $additionalfee = htmlspecialchars($row->additionalfee);
     $purchaseprice = htmlspecialchars($row->purchaseprice);
     $saleprice = htmlspecialchars($row->saleprice);
     $profit = $saleprice - $purchaseprice;
@@ -81,8 +79,6 @@ echo '
    <li class="list-group-item"><b>Product Code</b><span class="badge badge-warning float-right">'.$productCode.'</span></li>
   <li class="list-group-item"><b>Category</b><span class="badge badge-success float-right">'.$category.'</span></li>
   <li class="list-group-item"><b>Description</b><span class="badge badge-primary float-right">'.$description.'</span></li>
-  <li class="list-group-item"><b>Service Type</b><span class="badge badge-secondary float-right">'.$servicetype.'</span></li>
-  <li class="list-group-item"><b>Additional Fee</b><span class="badge badge-danger float-right">'.$additionalfee.'</span></li>
   <li class="list-group-item"><b>Purchase Price</b><span class="badge badge-secondary float-right">'.$purchaseprice.'</span></li>
   <li class="list-group-item"><b>Sale Price</b><span class="badge badge-dark float-right">'.$saleprice.'</span></li>
   
